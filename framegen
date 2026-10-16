@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+case "$(uname -s)" in
+  Darwin) PLAT="mac" ;;
+  *) PLAT="lin64" ;;
+esac
+PY="$DIR/python/bin/python3"
+[ -x "$PY" ] || PY="$DIR/python/$PLAT/bin/python3"
+[ -x "$PY" ] || PY="$(command -v python3 || command -v python)"
+export PYTHONDONTWRITEBYTECODE=1
+exec "$PY" "$DIR/framegen.py" "$@"

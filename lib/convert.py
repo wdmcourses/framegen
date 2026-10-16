@@ -6,7 +6,7 @@ import tempfile
 import time
 
 from . import rife as rife_mod
-from .config import ffmpeg, ffmpeg_version
+from .config import WEBM_VIDEO, ffmpeg, ffmpeg_version
 from .encode import (MOVENC_EXT, audio_copy_ok, encoder, filter_args,
                      input_args, pick_container, subtitle_codec, video_args)
 from .plan import build_plan
@@ -28,7 +28,7 @@ def _progress(label, quiet, verbose):
     return Progress(label)
 
 
-def _run_ffmpeg_progress(cmd, total, progress):
+def _run_ffmpeg_progress(cmd, total, progress, err="error: ffmpeg failed"):
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             text=True, bufsize=1)
     for line in proc.stdout:
@@ -39,7 +39,7 @@ def _run_ffmpeg_progress(cmd, total, progress):
                 progress.update(int(val))
     proc.wait()
     if proc.returncode != 0:
-        raise SystemExit("error: ffmpeg failed while writing output")
+        raise SystemExit(err)
     if progress is not None:
         progress.update(total or progress.total, force=True)
 
@@ -64,7 +64,8 @@ def _decode_frames(src, work_in, n_expected, progress, frame_ext):
     cmd += ["-start_number", "1"]
     cmd += FRAME_CODECS.get(frame_ext, FRAME_CODECS["png"])
     cmd += [os.path.join(work_in, "%08d." + frame_ext)]
-    _run_ffmpeg_progress(cmd, n_expected, progress)
+    _run_ffmpeg_progress(cmd, n_expected, progress,
+                         "error: ffmpeg could not decode %s" % src)
 
 
 def _encode_from_frames(frames_dir, fps, src, out, vcodec, acodec, scodecs,
@@ -109,7 +110,8 @@ def _encode_from_frames(frames_dir, fps, src, out, vcodec, acodec, scodecs,
     if faststart and ext in MOVENC_EXT:
         cmd += ["-movflags", "+faststart"]
     cmd += ["-map_metadata", "0", "-map_chapters", "0", "-y", out]
-    _run_ffmpeg_progress(cmd, n_out, progress)
+    _run_ffmpeg_progress(cmd, n_out, progress,
+                         "error: ffmpeg could not write %s" % out)
 
 
 def _minterpolate(src, out, fps, vcodec, acodec, scodecs, ext, crf, preset, hw,
@@ -144,12 +146,23 @@ def _minterpolate(src, out, fps, vcodec, acodec, scodecs, ext, crf, preset, hw,
     if faststart and ext in MOVENC_EXT:
         cmd += ["-movflags", "+faststart"]
     cmd += ["-map_metadata", "0", "-map_chapters", "0", "-y", out]
-    _run_ffmpeg_progress(cmd, frames, progress)
+    _run_ffmpeg_progress(cmd, frames, progress,
+                         "error: ffmpeg could not write %s" % out)
 
 
-def _default_output(path, ext, fps, where=None):
+def _same_dir(a, b):
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
+def _default_output(path, ext, fps):
+    out_dir = os.getcwd()
+    src_dir = os.path.dirname(os.path.abspath(path))
     root, _ = os.path.splitext(os.path.basename(path))
-    return os.path.join(where or os.getcwd(), "%s_%gfps%s" % (root, float(fps), ext))
+    suffix = "_%gfps" % float(fps) if _same_dir(src_dir, out_dir) else ""
+    return os.path.join(out_dir, root + suffix + ext)
 
 
 def _unique(path):
@@ -175,10 +188,23 @@ def _engine_available():
         return False
 
 
+def _encode_retry(run, vcodec, hw, lossless, quiet):
+    """Run an encode; if the auto-picked hardware encoder fails on this input,
+    retry in software instead of leaving a broken file behind."""
+    try:
+        run(hw)
+    except SystemExit:
+        if hw != "auto" or not encoder(vcodec, "none" if lossless else hw).hardware:
+            raise
+        if not quiet:
+            print("warning    : hardware encoder failed, retrying in software")
+        run("none")
+
+
 def convert(path, target_fps, output=None, model=None, gpu="auto", engine="auto",
             vcodec=None, crf=18, preset="medium", hw="auto", tta=False,
             keep_temp=False, temp_dir=None, quiet=False, faststart=False,
-            lossless=False, frame_format="png", verbose=False, next_to_input=False):
+            lossless=False, frame_format="png", verbose=False, detail=True):
     src = os.path.abspath(path)
     if not os.path.isfile(src):
         raise SystemExit("error: input not found: %s" % src)
@@ -201,10 +227,16 @@ def convert(path, target_fps, output=None, model=None, gpu="auto", engine="auto"
 
     ext = pick_container(vcodec, audio["codec_name"] if audio else None,
                          os.path.splitext(src)[1])
-    out = output or _default_output(src, ext, target_fps,
-                                    os.path.dirname(src) if next_to_input else None)
+    out = output or _default_output(src, ext, target_fps)
     out = _unique(os.path.abspath(out))
     ext = os.path.splitext(out)[1].lower()
+
+    parent = os.path.dirname(out)
+    if parent and not os.path.isdir(parent):
+        raise SystemExit("error: output folder does not exist: %s" % parent)
+    if ext == ".webm" and vcodec not in WEBM_VIDEO:
+        raise SystemExit("error: %s video cannot be stored in WebM "
+                         "(use -c vp9 or another container)" % vcodec)
 
     acodec = audio["codec_name"] if audio else None
     scodecs = [s["codec_name"] for s in info.get("subtitles", [])]
@@ -217,7 +249,7 @@ def convert(path, target_fps, output=None, model=None, gpu="auto", engine="auto"
     if engine == "rife" and not _engine_available():
         raise SystemExit("error: rife-ncnn-vulkan not found; try --engine ffmpeg")
 
-    if not quiet:
+    if not quiet and detail:
         print("input      : %s" % src)
         print("video      : %s %dx%d, %s fps" % (video["codec_name"], width, height,
                                                  _fmt_fps(src_fps)))
@@ -231,20 +263,36 @@ def convert(path, target_fps, output=None, model=None, gpu="auto", engine="auto"
         except SystemExit:
             pass
 
+    dropped = [sc for sc in scodecs if not subtitle_codec(ext, sc)]
+    if dropped and not quiet:
+        print("warning    : %d subtitle track(s) cannot be stored in %s and were dropped"
+              % (len(dropped), ext))
+
     if engine == "ffmpeg":
+        t0 = time.time()
         pr = _progress("interpolate", quiet, verbose)
         try:
-            _minterpolate(src, out, target_fps, vcodec, acodec, scodecs, ext,
-                          crf, preset, hw, duration, pr if not quiet else None,
-                          faststart=faststart, lossless=lossless)
+            _encode_retry(
+                lambda h: _minterpolate(
+                    src, out, target_fps, vcodec, acodec, scodecs, ext, crf,
+                    preset, h, duration, pr if not quiet else None,
+                    faststart=faststart, lossless=lossless),
+                vcodec, hw, lossless, quiet)
         finally:
             pr.close()
         if not quiet:
-            print("output     : %s" % out)
-        return out
+            if detail:
+                print("output     : %s" % out)
+            else:
+                print("  %-40s -> %s" % (os.path.basename(src), os.path.basename(out)))
+        frames = int(round(duration * float(target_fps))) if duration else 0
+        return {"output": out, "frames_in": n_in or 0, "frames_out": frames,
+                "seconds": time.time() - t0}
 
     work_root = temp_dir or tempfile.gettempdir()
     work = tempfile.mkdtemp(prefix="framegen_", dir=work_root)
+    if keep_temp and not quiet:
+        print("temp       : %s" % work)
     work_in = os.path.join(work, "in")
     work_out = os.path.join(work, "out")
     try:
@@ -276,23 +324,31 @@ def convert(path, target_fps, output=None, model=None, gpu="auto", engine="auto"
         ep = _progress("encode", quiet, verbose)
         ep.start(produced)
         try:
-            _encode_from_frames(work_out, target_fps, src, out, vcodec, acodec,
-                                scodecs, ext, crf, preset, hw, None, produced,
-                                ep if not quiet else None, frame_ext=frame_ext,
-                                faststart=faststart, lossless=lossless)
+            _encode_retry(
+                lambda h: _encode_from_frames(
+                    work_out, target_fps, src, out, vcodec, acodec, scodecs, ext,
+                    crf, preset, h, None, produced,
+                    ep if not quiet else None, frame_ext=frame_ext,
+                    faststart=faststart, lossless=lossless),
+                vcodec, hw, lossless, quiet)
         finally:
             ep.close()
         t_encode = time.time() - t0
+        elapsed = t_decode + t_rife + t_encode
         if not quiet:
-            print("frames     : %d -> %d" % (n_frames, produced))
-            print("time       : decode %.1fs, interpolate %.1fs, encode %.1fs, total %.1fs"
-                  % (t_decode, t_rife, t_encode, t_decode + t_rife + t_encode))
-            print("output     : %s" % out)
-        return out
+            if detail:
+                print("frames     : %d -> %d" % (n_frames, produced))
+                print("time       : decode %.1fs, interpolate %.1fs, encode %.1fs, total %.1fs"
+                      % (t_decode, t_rife, t_encode, elapsed))
+                print("output     : %s" % out)
+            else:
+                print("  %-40s %d -> %d frames, %.1fs -> %s"
+                      % (os.path.basename(src), n_frames, produced, elapsed,
+                         os.path.basename(out)))
+        return {"output": out, "frames_in": n_frames, "frames_out": produced,
+                "seconds": elapsed}
     finally:
-        if keep_temp:
-            print("temp       : %s" % work)
-        else:
+        if not keep_temp:
             shutil.rmtree(work, ignore_errors=True)
 
 

@@ -38,7 +38,10 @@ framegen <file>
 framegen -r <folder>
 ```
 
-The result is saved in the current folder as `<name>_60fps.<ext>`.
+The result is saved in the current folder. If the source is in the current folder
+too, `_<fps>fps` is added to the name (`clip_60fps.mp4`, or `clip_120fps.mp4`
+with `-f 120`) so the original is not overwritten; when the source is in another
+folder, the name is kept as-is.
 
 To pick a different frame rate:
 
@@ -55,7 +58,7 @@ framegen -r clips/
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `-f, --fps` | `60` | Target frame rate. |
-| `-o, --output` | `<name>_<fps>fps.<ext>` | Output file. |
+| `-o, --output` | auto | Output file (see above). |
 | `-r, --recursive` | off | Process every video in a folder. |
 | `-q, --quiet` | off | Print only the output path. |
 | `-v, --verbose` | off | Print progress lines (for host apps). |
@@ -63,24 +66,12 @@ framegen -r clips/
 Everything else is tuned automatically. A few advanced options (codec, quality,
 model, lossless output) are still accepted but hidden from `--help`.
 
-## Running from source
-
-The repository ships code only. To fetch the engine and weights for the current
-platform:
-
-```
-framegen -i
-```
-
-Set `FRAMEGEN_MIRROR=<base url>` to pull the lean per-platform archives instead
-of the large upstream release. The recommended setup (engine + `rife-v4.6`) is
-about **17 MB** on disk.
-
 ## Building
 
 ```
-python scripts/fetch_engines.py    # engine binaries for all platforms
-python scripts/pack.py             # dist/framegen-<platform>/ + archives
+python scripts/fetch_engines.py          # engine binaries + model weights
+python scripts/pack.py                   # dist/framegen-<platform>/ + archives
+python scripts/pack.py --platform win-x64
 ```
 
 Output: `framegen-win-x64.zip`, `framegen-linux-x64.tar.gz`,

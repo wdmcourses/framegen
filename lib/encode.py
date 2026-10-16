@@ -2,10 +2,18 @@ import os
 import subprocess
 import sys
 
-from .config import (MKV_AUDIO, MP4_AUDIO, WEBM_AUDIO, ffmpeg,
+from .config import (MKV_AUDIO, MP4_AUDIO, WEBM_AUDIO, WEBM_VIDEO, ffmpeg,
                      ffmpeg_version)
 
 MOVENC_EXT = (".mp4", ".m4v", ".mov")
+
+# Subtitle codecs that can be converted to another text format. Bitmap formats
+# (hdmv_pgs_subtitle, dvd_subtitle, dvb_subtitle, xsub) can only be copied.
+TEXT_SUBS = frozenset({
+    "subrip", "srt", "ass", "ssa", "mov_text", "tx3g", "webvtt", "text",
+    "eia_608", "microdvd", "jacosub", "sami", "realtext", "stl",
+    "subviewer", "subviewer1", "vplayer", "pjs",
+})
 
 # codec -> ordered software (encoder, pix_fmt) candidates.
 SOFTWARE = {
@@ -167,7 +175,9 @@ def pick_container(vcodec, acodec, src_ext):
     if acodec is None:
         return ext if ext in (".mp4", ".mkv", ".mov", ".webm") else ".mp4"
     if acodec in ("opus", "vorbis"):
-        return ".webm" if ext == ".webm" else ".mkv"
+        if ext == ".webm" and (vcodec or "").lower() in WEBM_VIDEO:
+            return ".webm"
+        return ".mkv"
     if acodec in MP4_AUDIO and ext in MOVENC_EXT:
         return ext
     if acodec in MP4_AUDIO:
@@ -190,14 +200,21 @@ def audio_copy_ok(ext, acodec):
 
 
 def subtitle_codec(ext, scodec):
+    """Codec to use for a subtitle stream, or None when it cannot be stored.
+
+    Text subtitles are converted; bitmap ones (PGS, DVB, VobSub) can only be
+    copied, so they are dropped unless the container keeps them as-is.
+    """
     if ext == ".mkv":
         return "copy"
     if ext in MOVENC_EXT:
         if scodec in ("mov_text", "tx3g"):
             return "copy"
-        return "mov_text"
+        return "mov_text" if scodec in TEXT_SUBS else None
     if ext == ".webm":
-        return "webvtt" if scodec != "webvtt" else "copy"
+        if scodec == "webvtt":
+            return "copy"
+        return "webvtt" if scodec in TEXT_SUBS else None
     return None
 
 

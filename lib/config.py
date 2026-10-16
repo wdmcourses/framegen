@@ -19,20 +19,6 @@ def platform_key():
 PLATFORM_DIR = os.path.join(RESOURCES_DIR, platform_key())
 MODELS_DIR = os.path.join(RESOURCES_DIR, "models")
 
-
-def cache_dir():
-    """User-level cache for downloaded archives (kept out of the app folder)."""
-    env = os.environ.get("FRAMEGEN_CACHE")
-    if env:
-        return env
-    if sys.platform.startswith("win"):
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        return os.path.join(base, "framegen", "cache")
-    if sys.platform == "darwin":
-        return os.path.expanduser("~/Library/Caches/framegen")
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-    return os.path.join(base, "framegen")
-
 DEFAULT_FPS = 60.0
 MAX_FPS = 480.0
 MIN_FPS = 1.0

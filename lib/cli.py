@@ -4,7 +4,6 @@ import sys
 
 from .config import DEFAULT_FPS, MAX_FPS, MIN_FPS, VIDEO_EXTS, ffmpeg
 from .convert import convert
-from .install import install
 
 
 def collect_inputs(path):
@@ -32,7 +31,7 @@ def main():
         prog="framegen",
         description="Raise any video to a target frame rate (default 60 fps) with "
                     "neural frame interpolation (RIFE). Fully self-contained.")
-    ap.add_argument("input", nargs="?", help="input video file or folder (with -r)")
+    ap.add_argument("input", help="input video file or folder (with -r)")
     ap.add_argument("-f", "--fps", type=float, default=DEFAULT_FPS, metavar="FPS",
                     help="target frame rate (default %(default)s)")
     ap.add_argument("-o", "--output", help="output file (single input only)")
@@ -41,8 +40,6 @@ def main():
     ap.add_argument("-q", "--quiet", action="store_true", help="only print the output path")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="emit machine-readable progress lines for host apps")
-    ap.add_argument("-i", "--install", action="store_true",
-                    help="download the engine and weights into resources/ and exit")
 
     # Everything else is tuned automatically; these knobs still work but are
     # kept out of --help so the interface stays as simple as the job.
@@ -61,19 +58,7 @@ def main():
     ap.add_argument("--tta", action="store_true", **hidden)
     ap.add_argument("--keep-temp", action="store_true", **hidden)
     ap.add_argument("--temp-dir", **hidden)
-    ap.add_argument("--models", metavar="NAMES", **hidden)
-    ap.add_argument("--force", action="store_true", **hidden)
     args = ap.parse_args()
-
-    if args.install:
-        models = None
-        if args.models:
-            models = [m.strip() for m in args.models.split(",") if m.strip()]
-        install(models=models, force=args.force, quiet=args.quiet)
-        return
-
-    if not args.input:
-        ap.error("the following arguments are required: input (or use -i/--install)")
 
     if not MIN_FPS <= args.fps <= MAX_FPS:
         raise SystemExit("error: -f/--fps must be between %g and %g" % (MIN_FPS, MAX_FPS))
@@ -90,9 +75,9 @@ def main():
     if not args.recursive:
         if not os.path.isfile(path):
             raise SystemExit("error: input not found: %s" % path)
-        out = convert(path, output=args.output, **common)
+        res = convert(path, output=args.output, **common)
         if args.quiet:
-            print(out)
+            print(res["output"])
         return
 
     if not os.path.isdir(path):
@@ -105,15 +90,25 @@ def main():
 
     done = 0
     failed = 0
+    frames = 0
+    seconds = 0.0
     for i, item in enumerate(inputs, 1):
-        print("[%d/%d] %s" % (i, len(inputs), item))
+        if not args.quiet:
+            print("[%d/%d] %s" % (i, len(inputs), item))
         try:
-            convert(item, output=None, next_to_input=True, **common)
+            res = convert(item, output=None, detail=args.verbose, **common)
             done += 1
+            frames += res["frames_out"]
+            seconds += res["seconds"]
+            if args.quiet:
+                print(res["output"])
         except SystemExit as exc:
             failed += 1
             reason = str(exc).strip().splitlines()[0] if str(exc).strip() else "failed"
-            print("skipped    : %s (%s)" % (item, reason))
-    print("summary    : %d processed, %d skipped" % (done, failed))
+            if not args.quiet:
+                print("skipped    : %s (%s)" % (item, reason))
+    if not args.quiet:
+        print("summary    : %d processed, %d skipped, %d frame(s) written, %.1f s"
+              % (done, failed, frames, seconds))
     if done == 0:
         sys.exit(1)

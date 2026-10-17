@@ -34,12 +34,16 @@ RIFE = "rife-ncnn-vulkan"
 
 VIDEO_EXTS = frozenset({
     ".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".wmv", ".flv",
-    ".ts", ".mts", ".m2ts", ".mpg", ".mpeg", ".ogv", ".3gp",
+    ".ts", ".mts", ".m2ts", ".m2t", ".mpg", ".mpeg", ".ogv", ".3gp",
+    ".3g2", ".f4v", ".ipod", ".psp", ".ismv",
 })
 
-MP4_VIDEO = frozenset({"h264", "hevc", "h265", "mpeg4", "mpeg2video", "av1", "vp9"})
 MP4_AUDIO = frozenset({"aac", "mp3", "ac3", "eac3", "alac", "opus"})
-MKV_AUDIO = frozenset({"aac", "mp3", "ac3", "eac3", "opus", "vorbis", "flac", "alac", "pcm_s16le", "pcm_s24le"})
+MKV_AUDIO = frozenset({
+    "aac", "mp3", "ac3", "eac3", "opus", "vorbis", "flac", "alac", "mp2",
+    "dts", "truehd", "mlp", "wmav1", "wmav2",
+    "pcm_s16le", "pcm_s24le", "pcm_s16be", "pcm_s24be", "pcm_s32le", "pcm_u8",
+})
 WEBM_VIDEO = frozenset({"vp8", "vp9", "av1"})
 WEBM_AUDIO = frozenset({"opus", "vorbis"})
 

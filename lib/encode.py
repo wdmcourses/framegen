@@ -167,23 +167,22 @@ def encoder(codec, hw):
     return _software(codec)
 
 
-def pick_container(vcodec, acodec, src_ext):
-    """Choose an output container that can hold the video and (copied) audio."""
+def pick_container(vcodec, acodecs, src_ext):
+    """Choose an output container that can hold the video and every audio track."""
     ext = (src_ext or "").lower()
     if (vcodec or "").lower() == "ffv1":
         return ".mkv"
-    if acodec is None:
-        return ext if ext in (".mp4", ".mkv", ".mov", ".webm") else ".mp4"
-    if acodec in ("opus", "vorbis"):
+    codecs = tuple(acodecs or ())
+    if not codecs:
+        if ext == ".webm":
+            return ".webm" if (vcodec or "").lower() in WEBM_VIDEO else ".mkv"
+        return ext if ext in (".mp4", ".mkv", ".mov") else ".mp4"
+    if all(codec in WEBM_AUDIO for codec in codecs):
         if ext == ".webm" and (vcodec or "").lower() in WEBM_VIDEO:
             return ".webm"
         return ".mkv"
-    if acodec in MP4_AUDIO and ext in MOVENC_EXT:
-        return ext
-    if acodec in MP4_AUDIO:
-        return ".mp4"
-    if acodec in MKV_AUDIO:
-        return ".mkv"
+    if all(codec in MP4_AUDIO for codec in codecs):
+        return ext if ext in MOVENC_EXT else ".mp4"
     return ".mkv"
 
 
@@ -199,23 +198,39 @@ def audio_copy_ok(ext, acodec):
     return False
 
 
-def subtitle_codec(ext, scodec):
-    """Codec to use for a subtitle stream, or None when it cannot be stored.
+def audio_args(ext, acodecs):
+    """Per-stream copy/transcode options for the audio tracks that get mapped."""
+    args = []
+    for i, codec in enumerate(acodecs):
+        if audio_copy_ok(ext, codec):
+            args += ["-c:a:%d" % i, "copy"]
+        else:
+            args += ["-c:a:%d" % i, "aac", "-b:a:%d" % i, "192k"]
+    return args
 
-    Text subtitles are converted; bitmap ones (PGS, DVB, VobSub) can only be
-    copied, so they are dropped unless the container keeps them as-is.
+
+def subtitle_plan(ext, subs):
+    """(codec, [stream indexes]) for the subtitle tracks that can be stored.
+
+    Text subtitles are converted to the container's text format; bitmap ones
+    (PGS, DVB, VobSub) can only be copied, so they are left out of the plan
+    unless the container keeps them as they are. Every accepted stream shares
+    the same target codec, so one -c:s describes them all.
     """
     if ext == ".mkv":
-        return "copy"
-    if ext in MOVENC_EXT:
-        if scodec in ("mov_text", "tx3g"):
-            return "copy"
-        return "mov_text" if scodec in TEXT_SUBS else None
-    if ext == ".webm":
-        if scodec == "webvtt":
-            return "copy"
-        return "webvtt" if scodec in TEXT_SUBS else None
-    return None
+        return ("copy", [i for i, _ in subs])
+    if ext in MOVENC_EXT or ext == ".webm":
+        want = "mov_text" if ext in MOVENC_EXT else "webvtt"
+        keep = [i for i, sc in subs if sc in TEXT_SUBS]
+        return (want, keep) if keep else (None, [])
+    return (None, [])
+
+
+def container_args(ext, vcodec):
+    """Container-level output options: HEVC in MP4/MOV needs the Apple tag."""
+    if ext in MOVENC_EXT and (vcodec or "").lower() in ("hevc", "h265"):
+        return ["-tag:v", "hvc1"]
+    return []
 
 
 def _nvenc_preset(preset):
@@ -241,13 +256,20 @@ def video_args(enc, crf, preset, lossless=False):
             return args + ["-x265-params", "lossless=1"]
         if name == "ffv1":
             return args + ["-level", "3", "-g", "1"]
+        if name in ("libvpx-vp9", "libvpx"):
+            return args + ["-lossless", "1", "-b:v", "0"]
+        if name == "libaom-av1":
+            return args + ["-strict", "-2", "-crf", "0", "-b:v", "0"]
+        if name == "libsvtav1":
+            return args + ["-crf", "0", "-b:v", "0"]
         if name.endswith("_nvenc"):
             return args + ["-tune", "lossless", "-rc", "constqp", "-qp", "0"]
-        return args + ["-crf", "0"]
+        return args + ["-crf", "0", "-b:v", "0"]
     if name == "ffv1":
         return args
     if name.endswith("_nvenc"):
-        args += ["-preset", _nvenc_preset(preset), "-cq", str(crf), "-rc", "vbr"]
+        args += ["-preset", _nvenc_preset(preset), "-cq", str(crf), "-rc", "vbr",
+                 "-b:v", "0"]
     elif name.endswith("_amf"):
         args += ["-quality", "quality", "-rc", "cqp",
                  "-qp_i", str(crf), "-qp_p", str(crf), "-qp_b", str(crf)]
@@ -260,7 +282,7 @@ def video_args(enc, crf, preset, lossless=False):
     elif name == "libsvtav1":
         args += ["-crf", str(crf), "-preset", "6"]
     elif name == "libaom-av1":
-        args += ["-crf", str(crf), "-b:v", "0", "-cpu-used", "6"]
+        args += ["-crf", str(crf), "-b:v", "0", "-cpu-used", "6", "-strict", "-2"]
     elif name in ("libvpx-vp9", "libvpx"):
         args += ["-crf", str(crf), "-b:v", "0"]
     else:

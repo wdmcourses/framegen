@@ -34,9 +34,9 @@ PBS_ASSET = "cpython-{ver}+{tag}-{triple}-install_only_stripped.tar.gz"
 
 # Candidate binaries copied into resources/ of each build (present ones only).
 BINARIES = {
-    "win64": ("rife-ncnn-vulkan.exe", "ffmpeg.exe", "ffprobe.exe", "vcomp140.dll"),
-    "lin64": ("rife-ncnn-vulkan", "ffmpeg", "ffprobe"),
-    "mac": ("rife-ncnn-vulkan", "ffmpeg", "ffprobe"),
+    "win64": ("rife-ncnn-vulkan.exe", "ffmpeg.exe", "vcomp140.dll"),
+    "lin64": ("rife-ncnn-vulkan", "ffmpeg"),
+    "mac": ("rife-ncnn-vulkan", "ffmpeg"),
 }
 
 TARGETS = {

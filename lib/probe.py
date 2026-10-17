@@ -10,7 +10,6 @@ _DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 _SIZE_RE = re.compile(r"\b(\d{2,5})x(\d{2,5})\b")
 _RATE_RE = re.compile(r"\b([\d.]+)\s*fps\b")
 _HZ_RE = re.compile(r"\b(\d+)\s*Hz\b")
-_BITRATE_RE = re.compile(r"\b(\d+)\s*kb/s\b")
 _NAMED_LAYOUTS = {"mono": 1, "stereo": 2, "quad": 4, "hexagonal": 6, "octagonal": 8}
 
 
@@ -60,28 +59,19 @@ def _probe_json(path):
 def _video_from_stream(s):
     fps = parse_rate(s.get("avg_frame_rate")) or parse_rate(s.get("r_frame_rate"))
     return {
-        "index": s.get("index", 0),
         "codec_name": (s.get("codec_name") or "").lower(),
         "width": int(s.get("width") or 0),
         "height": int(s.get("height") or 0),
-        "pix_fmt": s.get("pix_fmt") or "",
         "fps": fps,
         "nb_frames": int(s["nb_frames"]) if str(s.get("nb_frames", "")).isdigit() else None,
-        "bit_rate": int(s["bit_rate"]) if str(s.get("bit_rate", "")).isdigit() else None,
-        "disposition": s.get("disposition") or {},
-        "tags": s.get("tags") or {},
     }
 
 
 def _audio_from_stream(s):
     return {
-        "index": s.get("index", 0),
         "codec_name": (s.get("codec_name") or "").lower(),
         "channels": int(s.get("channels") or 2),
         "sample_rate": int(s.get("sample_rate") or 48000),
-        "bit_rate": int(s["bit_rate"]) if str(s.get("bit_rate", "")).isdigit() else None,
-        "disposition": s.get("disposition") or {},
-        "tags": s.get("tags") or {},
     }
 
 
@@ -104,14 +94,15 @@ def _probe_json_result(path):
     duration = float(fmt.get("duration") or 0.0) or 0.0
     if not duration and videos[0].get("nb_frames") and videos[0].get("fps"):
         duration = float(videos[0]["nb_frames"]) / float(videos[0]["fps"])
-    return {"video": videos[0], "videos": videos, "audio": (audios[0] if audios else None),
-            "audios": audios, "subtitles": subtitles, "duration": duration}
+    return {"video": videos[0], "audios": audios,
+            "subtitles": subtitles, "duration": duration}
 
 
 def _probe_ffmpeg_result(path):
     r = subprocess.run([ffmpeg(), "-hide_banner", "-i", path], capture_output=True, text=True)
     err = r.stderr
-    video = audio = None
+    video = None
+    audios = []
     for line in err.splitlines():
         m = _STREAM_RE.search(line)
         if not m:
@@ -120,28 +111,25 @@ def _probe_ffmpeg_result(path):
         if kind == "video" and video is None:
             size = _SIZE_RE.search(line)
             rate = _RATE_RE.search(line)
-            video = {"index": 0, "codec_name": codec,
+            video = {"codec_name": codec,
                      "width": int(size.group(1)) if size else 0,
                      "height": int(size.group(2)) if size else 0,
-                     "pix_fmt": "", "fps": parse_rate(rate.group(1)) if rate else None,
-                     "nb_frames": None, "bit_rate": None, "disposition": {}, "tags": {}}
-        elif kind == "audio" and audio is None:
+                     "fps": parse_rate(rate.group(1)) if rate else None,
+                     "nb_frames": None}
+        elif kind == "audio":
             hz = _HZ_RE.search(line)
-            br = _BITRATE_RE.search(line)
             layout = line.split("Hz,", 1)[1].split(",")[0] if "Hz," in line else "stereo"
-            audio = {"index": 0, "codec_name": codec,
-                     "channels": _channels(layout),
-                     "sample_rate": int(hz.group(1)) if hz else 48000,
-                     "bit_rate": int(br.group(1)) * 1000 if br else None,
-                     "disposition": {}, "tags": {}}
+            audios.append({"codec_name": codec,
+                           "channels": _channels(layout),
+                           "sample_rate": int(hz.group(1)) if hz else 48000})
     if video is None:
         raise SystemExit("error: ffmpeg could not read a video stream from %s\n%s" % (path, err.strip()))
     dur = _DURATION_RE.search(err)
     duration = 0.0
     if dur:
         duration = int(dur.group(1)) * 3600 + int(dur.group(2)) * 60 + float(dur.group(3))
-    return {"video": video, "videos": [video], "audio": audio,
-            "audios": [audio] if audio else [], "subtitles": [], "duration": duration}
+    return {"video": video, "audios": audios,
+            "subtitles": [], "duration": duration}
 
 
 def probe_media(path):

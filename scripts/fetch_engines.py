@@ -30,7 +30,6 @@ RESOURCES = os.path.join(ROOT, "resources")
 
 RIFE_REPO = "nihui/rife-ncnn-vulkan"
 RIFE_TAG = "20221029"                                  # never "latest"
-RIFE_COMMIT = "a7532fc3f9f8f008cd6eecd6f2ffe2a9698e0cf7"
 RELEASE_BASE = "https://github.com/%s/releases/download/%s" % (RIFE_REPO, RIFE_TAG)
 
 # Platform -> (asset name, url, size)

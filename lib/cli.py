@@ -102,9 +102,11 @@ def main():
             seconds += res["seconds"]
             if args.quiet:
                 print(res["output"])
-        except SystemExit as exc:
+        except (SystemExit, Exception) as exc:
             failed += 1
-            reason = str(exc).strip().splitlines()[0] if str(exc).strip() else "failed"
+            text = str(exc).strip()
+            reason = (text.splitlines()[0] if text
+                      else "%s (no message)" % type(exc).__name__)
             if not args.quiet:
                 print("skipped    : %s (%s)" % (item, reason))
     if not args.quiet:
